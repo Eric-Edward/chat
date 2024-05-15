@@ -6,14 +6,16 @@ import (
 	"chat/tools"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gorilla/websocket"
+	"gorm.io/gorm"
 	"strconv"
 	"sync"
 	"time"
 )
 
-type ILocke struct {
+type ILock struct {
 	mu sync.Mutex
 	id uint
 }
@@ -30,13 +32,13 @@ type Connection struct {
 var AllConnections sync.Map
 
 // 使用redis时，给信息一个id
-var latest *ILocke
+var latest *ILock
 
 var timer *time.Ticker
 
 func init() {
 	AllConnections = sync.Map{}
-	latest = &ILocke{
+	latest = &ILock{
 		mu: sync.Mutex{},
 		id: 0,
 	}
@@ -48,10 +50,48 @@ func init() {
 
 // persistData 这个函数用于将redis中的数据持久化到mysql中保存
 func persistData() {
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Println(err)
+		}
+	}()
 	for {
 		select {
 		case <-timer.C:
+			var maxId uint
+			db := tools.GetDB()
+			tx := db.Model(&models.Message{}).Select("id").Order("id desc").Limit(1).First(&maxId)
+			if errors.Is(tx.Error, gorm.ErrRecordNotFound) {
+				maxId = 0
+			}
 
+			rdb := tools.GetRedis()
+			keys := rdb.Keys(context.Background(), "*").Val()
+			var needPersist []models.Message
+			for i := range keys {
+				key, err := strconv.Atoi(keys[i])
+				if err == nil && uint(key) <= maxId && len(keys) >= 20 {
+					rdb.Unlink(context.Background(), keys[i])
+				} else if uint(key) > maxId {
+					var msg models.Message
+					err = json.Unmarshal([]byte(rdb.Get(context.Background(), keys[i]).Val()), &msg)
+					if err != nil {
+						panic(err)
+					}
+					needPersist = append(needPersist, msg)
+				}
+			}
+
+			if len(needPersist) > 0 {
+				//使用事务提交需要更新的部分
+				begin := db.Begin()
+				result := begin.Table("messages").Create(needPersist)
+				if result.Error != nil {
+					begin.Rollback()
+					panic(result.Error)
+				}
+				begin.Commit()
+			}
 		default:
 			//不做什么，防止阻塞
 		}
@@ -61,6 +101,7 @@ func persistData() {
 // preLoadMessage 在服务运行前，提前将一些数据放到redis中。
 func preLoadMessage() {
 	rdb := tools.GetRedis()
+	rdb.FlushDB(context.Background())
 	messages, err := dao.GetLatestMessage()
 	if err != nil {
 		fmt.Println(err)
@@ -136,4 +177,9 @@ func (conn *Connection) SendMessage() {
 
 		}
 	}
+}
+
+// GetLatestId 这个函数用于返回当前服务器中维护的id最大值
+func (conn *Connection) GetLatestId() uint {
+	return latest.id
 }

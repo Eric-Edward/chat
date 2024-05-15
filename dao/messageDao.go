@@ -7,10 +7,10 @@ import (
 	"strconv"
 )
 
-func GetMessage(id string) ([]models.Message, error) {
+func GetMessage(id string, limit int) ([]models.Message, error) {
 	var messages []models.Message
 	db := tools.GetDB()
-	result := db.Model(&models.Message{}).Where("id <= ?", id).Limit(50).Order("id desc").Find(&messages)
+	result := db.Model(&models.Message{}).Where("id <= ?", id).Limit(limit).Order("id desc").Find(&messages)
 	if result.Error != nil || result.RowsAffected == 0 {
 		return nil, result.Error
 	}
@@ -19,5 +19,9 @@ func GetMessage(id string) ([]models.Message, error) {
 }
 
 func GetLatestMessage() ([]models.Message, error) {
-	return GetMessage(strconv.Itoa(math.MaxUint>>1 - 1))
+	return GetMessage(strconv.Itoa(math.MaxUint>>1-1), 50)
+}
+
+func GetLatestMessageByLimit(limit int) ([]models.Message, error) {
+	return GetMessage(strconv.Itoa(math.MaxUint>>1-1), limit)
 }

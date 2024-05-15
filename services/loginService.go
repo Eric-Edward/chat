@@ -1,12 +1,17 @@
 package services
 
 import (
+	"chat/dao"
 	"chat/global"
 	"chat/models"
+	"chat/tools"
+	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -54,7 +59,6 @@ func Login(c *gin.Context) {
 				return
 			}
 			if mType == websocket.TextMessage || mType == websocket.BinaryMessage {
-				fmt.Println("受到信息")
 				conn.FromWS <- models.Message{
 					ID:       0,
 					UserName: conn.Username,
@@ -101,5 +105,27 @@ func AfterLogin(conn *global.Connection) {
 		Time:     time.Now().Format("2006-01-02 15:04:05"),
 		Content:  "登录成功",
 	}
-
+	rdb := tools.GetRedis()
+	id := conn.GetLatestId()
+	var message []models.Message
+	for i := id; i >= 0 && i >= id-9; i-- {
+		var msg models.Message
+		val := rdb.Get(context.Background(), strconv.Itoa(int(i)))
+		if val != nil {
+			err := json.Unmarshal([]byte(val.Val()), &msg)
+			if err != nil {
+				fmt.Println(err)
+			}
+			message = append(message, msg)
+		} else {
+			messages, err := dao.GetMessage(strconv.Itoa(int(i)), int(10-(id-i+1)))
+			if err != nil {
+				fmt.Println(err)
+			}
+			message = append(message, messages...)
+		}
+	}
+	for i := len(message) - 1; i >= 0; i-- {
+		conn.ToWS <- message[i]
+	}
 }
