@@ -1,7 +1,8 @@
 package main
 
 import (
-	"chat/tools"
+	_ "chat/global"
+	"chat/router"
 	"fmt"
 )
 
@@ -12,9 +13,9 @@ func main() {
 		}
 	}()
 	//创建一个访问的路由，并且返回一个Gin服务
-	ginServer := tools.GetRouter()
+	ginServer := router.GetRouter()
 
-	err := ginServer.Run(":8080")
+	err := ginServer.Run("127.0.0.1:8080")
 	if err != nil {
 		panic(err)
 	}

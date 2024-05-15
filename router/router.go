@@ -1,4 +1,4 @@
-package tools
+package router
 
 import (
 	"chat/services"
@@ -10,7 +10,7 @@ func GetRouter() *gin.Engine {
 	ginServer := gin.Default()
 
 	//编写WebSocket 连接的路由
-	routerLogin := ginServer.Group("ws://")
+	routerLogin := ginServer.Group("/enter")
 	{
 		routerLogin.GET("", services.Login)
 	}
