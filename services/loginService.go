@@ -1,17 +1,12 @@
 package services
 
 import (
-	"chat/dao"
 	"chat/global"
 	"chat/models"
-	"chat/tools"
-	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"net/http"
-	"strconv"
 	"time"
 )
 
@@ -105,26 +100,13 @@ func AfterLogin(conn *global.Connection) {
 		Time:     time.Now().Format("2006-01-02 15:04:05"),
 		Content:  "登录成功",
 	}
-	rdb := tools.GetRedis()
 	id := conn.GetLatestId()
-	var message []models.Message
-	for i := id; i >= 0 && i >= id-9; i-- {
-		var msg models.Message
-		val := rdb.Get(context.Background(), strconv.Itoa(int(i)))
-		if val != nil {
-			err := json.Unmarshal([]byte(val.Val()), &msg)
-			if err != nil {
-				fmt.Println(err)
-			}
-			message = append(message, msg)
-		} else {
-			messages, err := dao.GetMessage(strconv.Itoa(int(i)), int(10-(id-i+1)))
-			if err != nil {
-				fmt.Println(err)
-			}
-			message = append(message, messages...)
-		}
+	message, err := GetMessageList(id, 10)
+	if err != nil {
+		fmt.Println(err)
 	}
+	// 反序返回给用户，但是这里可能会有一个问题。可能新的消息比查询的消息先到用户手里。这就有可能导致
+	// 用户看到的信息是乱序的。所以需要在前端根据序号排序后再显示
 	for i := len(message) - 1; i >= 0; i-- {
 		conn.ToWS <- message[i]
 	}

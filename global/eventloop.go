@@ -15,11 +15,13 @@ import (
 	"time"
 )
 
+// ILock 这个结构体用户维护当前信息的最新的id
 type ILock struct {
 	mu sync.Mutex
 	id uint
 }
 
+// Connection 用户表示一个ws连接
 type Connection struct {
 	Username string
 	WS       *websocket.Conn
@@ -34,6 +36,7 @@ var AllConnections sync.Map
 // 使用redis时，给信息一个id
 var latest *ILock
 
+// 这个timer是一个用于redis数据持久话的定时器
 var timer *time.Ticker
 
 func init() {
@@ -57,7 +60,10 @@ func persistData() {
 	}()
 	for {
 		select {
+		//每间隔2分钟就讲redis中最新的数据保存至mysql中，并且将上一个2分钟的数据删除
 		case <-timer.C:
+
+			// 获取数据库中目前保存的最新的信息的id
 			var maxId uint
 			db := tools.GetDB()
 			tx := db.Model(&models.Message{}).Select("id").Order("id desc").Limit(1).First(&maxId)
@@ -65,12 +71,15 @@ func persistData() {
 				maxId = 0
 			}
 
+			//或者redis中所有的信息
 			rdb := tools.GetRedis()
 			keys := rdb.Keys(context.Background(), "*").Val()
 			var needPersist []models.Message
 			for i := range keys {
 				key, err := strconv.Atoi(keys[i])
-				if err == nil && uint(key) <= maxId && len(keys) >= 20 {
+
+				// 持久话最新的，删除上一个2分钟的信息，但是同时保证redis中仍然有信息
+				if err == nil && uint(key) <= maxId && len(keys) >= 10 {
 					rdb.Unlink(context.Background(), keys[i])
 				} else if uint(key) > maxId {
 					var msg models.Message
@@ -82,8 +91,8 @@ func persistData() {
 				}
 			}
 
+			//使用事务提交需要更新的部分
 			if len(needPersist) > 0 {
-				//使用事务提交需要更新的部分
 				begin := db.Begin()
 				result := begin.Table("messages").Create(needPersist)
 				if result.Error != nil {
@@ -93,7 +102,7 @@ func persistData() {
 				begin.Commit()
 			}
 		default:
-			//不做什么，防止阻塞
+			//添加一个默认。
 		}
 	}
 }
@@ -106,9 +115,13 @@ func preLoadMessage() {
 	if err != nil {
 		fmt.Println(err)
 	}
+
+	// 互斥的拿到当前最新信息的id
 	latest.mu.Lock()
 	latest.id = uint(len(messages))
 	latest.mu.Unlock()
+
+	// 提前将聊天室中的信息读到redis中，方便查询
 	for i := 0; i < len(messages); i++ {
 		marshal, e := json.Marshal(messages[i])
 		if e != nil {
@@ -159,19 +172,22 @@ func (conn *Connection) ReceiveMessage() {
 
 // SendMessage 这个函数用来为客户运行一个发送至WS的goroutine
 func (conn *Connection) SendMessage() {
-	timer := time.NewTicker(time.Second * 10)
+	heart := time.NewTicker(time.Second * 10)
 	for {
 		select {
+		// 转发给用户的ws
 		case msg := <-conn.ToWS:
 			err := conn.WS.WriteJSON(msg)
 			if err != nil {
 				fmt.Println(err)
 			}
-		case <-timer.C:
+			//心跳
+		case <-heart.C:
 			_ = conn.WS.WriteMessage(websocket.PingMessage, []byte{})
 
+			//用户关闭计时器和退出当前携程
 		case <-conn.Close:
-			timer.Stop()
+			heart.Stop()
 			return
 		default:
 

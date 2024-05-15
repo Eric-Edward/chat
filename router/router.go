@@ -15,5 +15,11 @@ func GetRouter() *gin.Engine {
 		routerLogin.GET("", services.Login)
 	}
 
+	// 这个是信息的其他处理，获取更多的历史信息，但是没有前端
+	routerMessage := ginServer.Group("/message")
+	{
+		routerMessage.GET("", services.MessageService)
+	}
+
 	return ginServer
 }
